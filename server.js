@@ -1,1 +1,129 @@
-import http from "node:http";import{WebSocketServer}from"ws";import{randomBytes}from"node:crypto";import fs from"node:fs";import path from"node:path";import{fileURLToPath}from"node:url";const root=path.dirname(fileURLToPath(import.meta.url)),pub=path.join(root,"public"),rooms=new Map();const send=(w,m)=>w.readyState===1&&w.send(JSON.stringify(m));const code=()=>randomBytes(3).toString("hex").toUpperCase();const state=r=>({type:"state",room:r.code,players:[...r.players.values()].map(p=>({id:p.id,name:p.name,score:p.score,ready:p.ready})),status:r.status,winner:r.winner});const broadcast=(r,m)=>r.players.forEach(p=>send(p.ws,m));const server=http.createServer((q,s)=>{let f=path.join(pub,q.url==="/"?"index.html":q.url);fs.readFile(f,(e,d)=>e?s.writeHead(404).end():s.end(d))});const wss=new WebSocketServer({server});wss.on("connection",ws=>{let me,r;ws.on("message",b=>{let m;try{m=JSON.parse(b)}catch{return}if(m.type==="create"){let c;do c=code();while(rooms.has(c));r={code:c,players:new Map(),status:"lobby",winner:null};rooms.set(c,r)}else if(m.type==="join")r=rooms.get((m.code||"").toUpperCase());if((m.type==="create"||m.type==="join")&&r){if(r.status!=="lobby")return send(ws,{type:"error",message:"Game already started"});me={id:randomBytes(4).toString("hex"),name:String(m.name||"Player").slice(0,20),score:0,ready:false,ws};r.players.set(me.id,me);send(ws,{type:"connected",id:me.id,code:r.code});broadcast(r,state(r));return}if(!r||!me)return;if(m.type==="ready")me.ready=!me.ready;if(m.type==="start"&&r.players.size>=2){r.status="playing";r.winner=null;r.players.forEach(p=>p.score=0)}if(m.type==="tap"&&r.status==="playing"){me.score++;if(me.score>=10){r.status="finished";r.winner=me.id}}if(m.type==="again"&&r.status==="finished"){r.status="lobby";r.winner=null;r.players.forEach(p=>{p.score=0;p.ready=false})}broadcast(r,state(r))});ws.on("close",()=>{if(r&&me){r.players.delete(me.id);r.players.size?broadcast(r,state(r)):rooms.delete(r.code)}})});server.listen(process.env.PORT||3000,"0.0.0.0")
+import http from "node:http";
+import { WebSocketServer } from "ws";
+import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const pub = path.join(root, "public");
+const rooms = new Map();
+
+const send = (ws, message) => {
+  if (ws.readyState === 1) ws.send(JSON.stringify(message));
+};
+
+const makeCode = () => randomBytes(3).toString("hex").toUpperCase();
+
+const getState = (room) => ({
+  type: "state",
+  room: room.code,
+  players: [...room.players.values()].map(({ id, name, score, ready }) => ({ id, name, score, ready })),
+  status: room.status,
+  winner: room.winner
+});
+
+const broadcast = (room, message) => room.players.forEach((player) => send(player.ws, message));
+
+const server = http.createServer((req, res) => {
+  if (req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    return res.end("ok");
+  }
+
+  const requestedPath = new URL(req.url, "http://localhost").pathname;
+  const filePath = path.join(pub, requestedPath === "/" ? "index.html" : requestedPath);
+
+  fs.readFile(filePath, (error, data) => {
+    if (error) return res.writeHead(404).end("Not found");
+    res.writeHead(200, {
+      "Content-Type": filePath.endsWith(".html") ? "text/html; charset=utf-8" : "text/plain"
+    });
+    res.end(data);
+  });
+});
+
+const wss = new WebSocketServer({ server, path: "/ws" });
+
+wss.on("connection", (ws) => {
+  let me = null;
+  let room = null;
+
+  ws.on("error", (error) => console.error("WebSocket error:", error.message));
+
+  ws.on("message", (buffer) => {
+    let message;
+    try {
+      message = JSON.parse(buffer.toString());
+    } catch {
+      return send(ws, { type: "error", message: "Invalid message" });
+    }
+
+    if (message.type === "create") {
+      let code;
+      do code = makeCode(); while (rooms.has(code));
+      room = { code, players: new Map(), status: "lobby", winner: null };
+      rooms.set(code, room);
+    } else if (message.type === "join") {
+      room = rooms.get(String(message.code || "").trim().toUpperCase());
+      if (!room) return send(ws, { type: "error", message: "Room not found" });
+    }
+
+    if ((message.type === "create" || message.type === "join") && room) {
+      if (room.status !== "lobby") return send(ws, { type: "error", message: "Game already started" });
+
+      me = {
+        id: randomBytes(4).toString("hex"),
+        name: String(message.name || "Player").slice(0, 20),
+        score: 0,
+        ready: false,
+        ws
+      };
+
+      room.players.set(me.id, me);
+      send(ws, { type: "connected", id: me.id, code: room.code });
+      broadcast(room, getState(room));
+      return;
+    }
+
+    if (!room || !me) return;
+
+    if (message.type === "ready") {
+      me.ready = !me.ready;
+    } else if (message.type === "start" && room.players.size >= 2) {
+      room.status = "playing";
+      room.winner = null;
+      room.players.forEach((player) => {
+        player.score = 0;
+        player.ready = false;
+      });
+    } else if (message.type === "tap" && room.status === "playing") {
+      me.score += 1;
+      if (me.score >= 10) {
+        room.status = "finished";
+        room.winner = me.id;
+      }
+    } else if (message.type === "again" && room.status === "finished") {
+      room.status = "lobby";
+      room.winner = null;
+      room.players.forEach((player) => {
+        player.score = 0;
+        player.ready = false;
+      });
+    }
+
+    broadcast(room, getState(room));
+  });
+
+  ws.on("close", () => {
+    if (!room || !me) return;
+    room.players.delete(me.id);
+    if (room.players.size === 0) rooms.delete(room.code);
+    else broadcast(room, getState(room));
+  });
+});
+
+const port = Number(process.env.PORT) || 10000;
+server.listen(port, "0.0.0.0", () => {
+  console.log(`Room Rush listening on 0.0.0.0:${port}`);
+});
