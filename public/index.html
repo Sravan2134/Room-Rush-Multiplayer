@@ -1,1 +1,82 @@
-<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Room Rush</title><style>body{margin:0;background:#0b1020;color:#fff;font:16px system-ui;display:grid;place-items:center;min-height:100vh;padding:20px}.card{width:min(700px,100%);background:#151c33;padding:28px;border-radius:24px}h1{font-size:42px}input,button{padding:13px;border-radius:12px;border:0;margin:4px}input{background:#0b1020;color:#fff}button{background:#6875ff;color:#fff;font-weight:bold;cursor:pointer}.room{font-size:34px;letter-spacing:7px;font-weight:900}.players div{padding:12px;background:#0b1020;margin:7px 0;border-radius:10px;display:flex;justify-content:space-between}.tap{width:100%;height:180px;font-size:42px}.hide{display:none}.err{color:#ff8888}</style><div class=card><h1>⚡ Room Rush</h1><p>Real-time multiplayer reaction battle</p><section id=home><input id=name placeholder="Your name"><button onclick=create()>Create Room</button><br><input id=code placeholder="Room code"><button onclick=join()>Join Room</button></section><section id=game class=hide><div class=room id=room></div><p id=status></p><div class=players id=players></div><button id=ready onclick=ready()>Ready</button><button id=start onclick=start()>Start Game</button><button id=again class=hide onclick=again()>Play Again</button><button id=tap class="tap hide" onclick=tap()>TAP!</button></section><div class=err id=err></div></div><script>let w,id;const $=x=>document.getElementById(x);function connect(cb){w=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host);w.onopen=cb;w.onmessage=e=>{let m=JSON.parse(e.data);if(m.type==="error")return $("err").textContent=m.message;if(m.type==="connected"){id=m.id;$("home").classList.add("hide");$("game").classList.remove("hide");$("room").textContent=m.code}if(m.type==="state"){let me=m.players.find(p=>p.id===id);$("status").textContent=m.status==="lobby"?"Waiting in lobby":m.status==="playing"?"GO! First to 10 wins!":"Winner: "+(m.players.find(p=>p.id===m.winner)?.name||"");$("players").innerHTML=m.players.map(p=>"<div><span>"+p.name+(p.id===id?" (you)":"")+"</span><b>"+p.score+(p.ready?" ✓":"")+"</b></div>").join("");$("start").disabled=m.players.length<2||m.status!=="lobby";$("ready").disabled=m.status!=="lobby";$("tap").classList.toggle("hide",m.status!=="playing");$("again").classList.toggle("hide",m.status!=="finished")}}function send(x){w.send(JSON.stringify(x))}function create(){connect(()=>send({type:"create",name:$("name").value||"Player"}))}function join(){connect(()=>send({type:"join",name:$("name").value||"Player",code:$("code").value}))}function ready(){send({type:"ready"})}function start(){send({type:"start"})}function tap(){send({type:"tap"})}function again(){send({type:"again"})}</script>
+<!doctype html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Room Rush</title>
+<style>
+body{margin:0;background:#0b1020;color:#fff;font:16px system-ui;display:grid;place-items:center;min-height:100vh;padding:20px}
+.card{width:min(700px,100%);background:#151c33;padding:28px;border-radius:24px}
+h1{font-size:42px}input,button{padding:13px;border-radius:12px;border:0;margin:4px}
+input{background:#0b1020;color:#fff}button{background:#6875ff;color:#fff;font-weight:bold;cursor:pointer}
+.room{font-size:34px;letter-spacing:7px;font-weight:900}.players div{padding:12px;background:#0b1020;margin:7px 0;border-radius:10px;display:flex;justify-content:space-between}
+.tap{width:100%;height:180px;font-size:42px}.hide{display:none}.err{color:#ff8888;min-height:24px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>⚡ Room Rush</h1>
+<p>Real-time multiplayer reaction battle</p>
+<section id="home">
+<input id="name" placeholder="Your name">
+<button onclick="create()">Create Room</button><br>
+<input id="code" placeholder="Room code">
+<button onclick="join()">Join Room</button>
+</section>
+<section id="game" class="hide">
+<div class="room" id="room"></div>
+<p id="status"></p>
+<div class="players" id="players"></div>
+<button id="ready" onclick="ready()">Ready</button>
+<button id="start" onclick="start()">Start Game</button>
+<button id="again" class="hide" onclick="again()">Play Again</button>
+<button id="tap" class="tap hide" onclick="tap()">TAP!</button>
+</section>
+<div class="err" id="err"></div>
+</div>
+<script>
+let ws=null,playerId=null;
+const $=id=>document.getElementById(id);
+
+function showError(message){$("err").textContent=message}
+
+function connect(action){
+  showError("Connecting to game server...");
+  if(ws&&ws.readyState===WebSocket.OPEN)ws.close();
+  const protocol=location.protocol==="https:"?"wss:":"ws:";
+  ws=new WebSocket(protocol+"//"+location.host+"/ws");
+  ws.onopen=()=>{showError("");action()};
+  ws.onerror=()=>showError("Could not connect to the multiplayer server. Please refresh and try again.");
+  ws.onclose=()=>{if(!$("game").classList.contains("hide"))showError("Connection closed. Please refresh and rejoin the room.")};
+  ws.onmessage=event=>{
+    const message=JSON.parse(event.data);
+    if(message.type==="error"){showError(message.message);return}
+    if(message.type==="connected"){
+      playerId=message.id;
+      $("home").classList.add("hide");
+      $("game").classList.remove("hide");
+      $("room").textContent=message.code;
+      $("status").textContent="Room created. Share this code with your friend.";
+    }
+    if(message.type==="state"){
+      $("status").textContent=message.status==="lobby"?"Waiting for players...":message.status==="playing"?"GO! First to 10 wins!":"Winner: "+(message.players.find(p=>p.id===message.winner)?.name||"");
+      $("players").innerHTML=message.players.map(p=>"<div><span>"+p.name+(p.id===playerId?" (you)":"")+"</span><b>"+p.score+(p.ready?" ✓":"")+"</b></div>").join("");
+      $("start").disabled=message.players.length<2||message.status!=="lobby";
+      $("ready").disabled=message.status!=="lobby";
+      $("tap").classList.toggle("hide",message.status!=="playing");
+      $("again").classList.toggle("hide",message.status!=="finished");
+    }
+  };
+}
+function send(message){
+  if(!ws||ws.readyState!==WebSocket.OPEN){showError("Not connected to the game server. Please refresh.");return}
+  ws.send(JSON.stringify(message));
+}
+function create(){connect(()=>send({type:"create",name:$("name").value||"Player"}))}
+function join(){const code=$("code").value.trim();if(!code)return showError("Enter a room code.");connect(()=>send({type:"join",name:$("name").value||"Player",code}))}
+function ready(){send({type:"ready"})}
+function start(){send({type:"start"})}
+function tap(){send({type:"tap"})}
+function again(){send({type:"again"})}
+</script>
+</body>
+</html>
