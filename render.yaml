@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: room-rush
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
